@@ -1,4 +1,4 @@
-module InteractiveRestarts
+module ExceptionalExtended
 
 include("Exceptional.jl")
 using .Exceptional: handling, DivisionByZero, with_restart, reciprocal, Restart
