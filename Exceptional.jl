@@ -251,21 +251,21 @@ end
 # end
 
 # Restarts encadeados com o mesmo nome
-function reciprocal(value::Int)
+function reciprocal2(value::Int)
 	with_restart(:return_zero => () -> 0,
 		:return_value => identity,
-		:retry_using => reciprocal) do
+		:retry_using => reciprocal2) do
 		with_restart(:return_zero => () -> 1,
 			:return_value => identity,
-			:retry_using => reciprocal) do
+			:retry_using => reciprocal2) do
 			value == 0 ? error(DivisionByZero()) : 1 / value
 		end
 	end
 end
 
-println(handling(DivisionByZero => (c) -> invoke_restart(:return_zero)) do
-	reciprocal(0)
-end)
+# println(handling(DivisionByZero => (c) -> invoke_restart(:return_zero)) do
+# 	reciprocal2(0)
+# end)
 
 
 end # module
