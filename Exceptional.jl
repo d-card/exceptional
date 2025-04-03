@@ -1,16 +1,22 @@
 module Exceptional
 
+export _restart_stack
+
 struct Escape
 	value::Any
 	token::Symbol
 end
 
 struct Restart
-	callback::Any
+	name::Symbol
+	func::Function
+	test::Union{Function, Nothing}
+	report::Union{String, Nothing}
+	interactive::Union{Function, Nothing}
 end
 
 const _handler_stack = Vector{Pair{Type, Function}}()
-const _restart_stack = Vector{Pair{Symbol, Function}}()
+const _restart_stack = Vector{Restart}()
 
 function to_escape(func)
 	token = gensym("escape")
@@ -48,7 +54,13 @@ function with_restart(func, restarts...)
 	prev_restarts_count = length(_restart_stack)
 
 	for restart in restarts
-		pushfirst!(_restart_stack, restart)
+		if restart isa Pair{Symbol, <:Function}
+			pushfirst!(_restart_stack, process_restart(restart))
+		elseif restart isa Tuple
+			pushfirst!(_restart_stack, process_restart(restart...))
+		else
+			error("Invalid restart specification: $restart")
+		end
 	end
 
 	try
@@ -60,14 +72,52 @@ function with_restart(func, restarts...)
 	end
 end
 
+function process_restart(basic::Pair{Symbol, <:Function}, options...)
+
+	test = nothing
+	report = nothing
+	interactive = nothing
+
+	if isempty(options)
+		return Restart(basic.first, basic.second, nothing, nothing, nothing)
+	else
+		for opt in options
+			if opt isa Pair
+				if opt.first == :test
+					test = opt.second
+				elseif opt.first == :report
+					report = opt.second
+				elseif opt.first == :interactive
+					interactive = opt.second
+				end
+			end
+		end
+		return Restart(basic.first, basic.second, test, report, interactive)
+	end
+end
+
 function available_restart(name)
-	return any(r -> r[1] == name, _restart_stack)
+	filter(_restart_stack) do restart
+		if restart.test === nothing
+			true
+		else
+			try
+				restart.test(exception)
+			catch
+				false
+			end
+		end
+	end
+	return any(r -> r.name == name, _restart_stack)
 end
 
 function invoke_restart(name, args...)
-	for (restart_name, restart_func) in _restart_stack
-		if restart_name == name
-			throw(Restart(restart_func(args...)))
+	for restart in _restart_stack
+		if restart.name == name
+			if isempty(args) && restart.interactive !== nothing
+				args = restart.interactive()
+			end
+			throw((restart, args...))
 		end
 	end
 	error("No restart named $name is available")
@@ -88,184 +138,19 @@ function error(exception)
 			try
 				handler_func(exception)
 			catch ex
-				if ex isa Restart
-					return ex.callback
+				if ex isa Tuple && length(ex) >= 1 && ex[1] isa Restart
+					restart = ex[1]
+					args = length(ex) > 1 ? ex[2:end] : ()
+
+					return restart.func(args...)
+				else
+					rethrow()
 				end
-				rethrow()
 			end
 		end
 	end
 	throw(exception)
 end
-
-############
-# EXAMPLES #
-############
-
-struct DivisionByZero <: Exception end
-
-# 1.
-function reciprocal(x)
-	x == 0 ? error(DivisionByZero()) : 1 / x
-end
-
-# println(reciprocal(10))
-# println(reciprocal(0))
-
-# 2.
-# handling(() -> reciprocal(0), DivisionByZero => c -> println("I saw a division by zero"))
-
-# handling(DivisionByZero =>
-# 	(c) -> println("I saw it too")) do
-# 	handling(DivisionByZero =>
-# 		(c) -> println("I saw a division by zero")) do
-# 		reciprocal(0)
-# 	end
-# end
-
-# 3.
-function mystery(n)
-	1 +
-	to_escape() do outer
-		1 +
-		to_escape() do inner
-			1 +
-			if n == 0
-				inner(1)
-			elseif n == 1
-				outer(1)
-			else
-				1
-			end
-		end
-	end
-end
-
-# println(mystery(0))
-# println(mystery(1))
-# println(mystery(2))
-
-# 4.
-# println(to_escape() do exit
-# 	handling(DivisionByZero =>
-# 		(c) -> (println("I saw it too"); exit("Done"))) do
-# 		handling(DivisionByZero =>
-# 			(c) -> println("I saw a division by zero")) do
-# 			reciprocal(0)
-# 		end
-# 	end
-# end)
-
-# println(to_escape() do exit
-# 	handling(DivisionByZero =>
-# 		(c) -> println("I saw it too")) do
-# 		handling(DivisionByZero =>
-# 			(c) -> (println("I saw a division by zero");
-# 			exit("Done"))) do
-# 			reciprocal(0)
-# 		end
-# 	end
-# end)
-
-# 5.
-function reciprocal(value::Int)
-	with_restart(:return_zero => () -> 0,
-		:return_value => identity,
-		:retry_using => reciprocal) do
-		value == 0 ? error(DivisionByZero()) : 1 / value
-	end
-end
-
-# println(handling(DivisionByZero => (c) -> invoke_restart(:return_zero)) do
-# 	reciprocal(0)
-# end)
-
-# println(handling(DivisionByZero => (c) -> invoke_restart(:return_value, 123)) do
-# 	reciprocal(0)
-# end)
-
-# println(handling(DivisionByZero => (c) -> invoke_restart(:retry_using, 10)) do
-# 	reciprocal(0)
-# end)
-
-# 6.
-# println(handling(DivisionByZero =>
-# 	(c) -> for restart in (:return_one, :return_zero, :die_horribly)
-# 		if available_restart(restart)
-# 			invoke_restart(restart)
-# 		end
-# 	end) do
-# 	reciprocal(0)
-# end)
-
-# 7.
-function infinity()
-	with_restart(:just_do_it => () -> 1 / 0) do
-		reciprocal(0)
-	end
-end
-
-# println(handling(DivisionByZero => (c) -> invoke_restart(:return_zero)) do
-# 	infinity()
-# end)
-
-# println(handling(DivisionByZero => (c) -> invoke_restart(:return_value, 1)) do
-# 	infinity()
-# end)
-
-# println(handling(DivisionByZero => (c) -> invoke_restart(:retry_using, 10)) do
-# 	infinity()
-# end)
-
-# println(handling(DivisionByZero => (c) -> invoke_restart(:just_do_it)) do
-# 	infinity()
-# end)
-
-# 8.
-struct LineEndLimit <: Exception
-end
-
-function print_line(str, line_end = 20)
-	let col = 0
-		for c in str
-			print(c)
-			col += 1
-			if col == line_end
-				signal(LineEndLimit())
-				col = 0
-			end
-		end
-	end
-end
-
-# print_line("Hi, everybody! How are you feeling today?\n")
-
-# println(to_escape() do exit
-# 	handling(LineEndLimit => (c) -> exit()) do
-# 		print_line("Hi, everybody! How are you feeling today?")
-# 	end
-# end)
-
-# handling(LineEndLimit => (c) -> println()) do
-# 	print_line("Hi, everybody! How are you feeling today?")
-# end
-
-# Restarts encadeados com o mesmo nome
-function reciprocal2(value::Int)
-	with_restart(:return_zero => () -> 0,
-		:return_value => identity,
-		:retry_using => reciprocal2) do
-		with_restart(:return_zero => () -> 1,
-			:return_value => identity,
-			:retry_using => reciprocal2) do
-			value == 0 ? error(DivisionByZero()) : 1 / value
-		end
-	end
-end
-
-# println(handling(DivisionByZero => (c) -> invoke_restart(:return_zero)) do
-# 	reciprocal2(0)
-# end)
 
 
 end # module

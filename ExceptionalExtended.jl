@@ -1,11 +1,11 @@
 module ExceptionalExtended
 
 include("Exceptional.jl")
-using .Exceptional: handling, DivisionByZero, with_restart, reciprocal, Restart
+using ..Exceptional: handling, with_restart, Restart, _restart_stack, invoke_restart, to_escape, error
 
-#############################
-# User handling of restarts #
-#############################
+#############################################################
+# User handling of restarts  +  Common Lisp Restart Options #
+#############################################################
 
 struct Abort
 	value::Any
@@ -47,15 +47,25 @@ function get_function_parameter_types(f::Function)
 end
 
 function interactive_restart_handler(exception)
-	if isempty(Exceptional._restart_stack)
+	_available_restarts = filter((restart) -> restart.test == nothing || restart.test(exception) == true, _restart_stack)
+	reverse!(_available_restarts)
+
+	if isempty(_available_restarts)
 		throw(exception)
 	end
 
 	println("An exception occurred: ", exception)
 	println("Available restarts:")
-	for (i, (name, _)) in enumerate(Exceptional._restart_stack)
-		println("  $i. $name")
+
+	for (i, restart) in enumerate(_available_restarts)
+		name = restart.name
+		if restart.report == nothing
+			println("  $i. $name")
+		else
+			println("  $i. $name: " * restart.report)
+		end
 	end
+
 	println("  0. Abort (rethrow exception)")
 
 	while true
@@ -66,23 +76,27 @@ function interactive_restart_handler(exception)
 				throw(Abort(exception))
 			end
 
-			if 1 <= choice <= length(Exceptional._restart_stack)
-				restart_name, restart_func = Exceptional._restart_stack[choice]
+			if 1 <= choice <= length(_available_restarts)
+				restart = _available_restarts[choice]
 
-				param_types = get_function_parameter_types(restart_func)
-
-				args = if isempty(param_types)
-					()
+				if restart.interactive !== nothing
+					return invoke_restart(restart.name, restart.interactive())
 				else
-					tuple(prompt_for_input.(param_types)...)
-				end
+					param_types = get_function_parameter_types(restart.func)
 
-				return Exceptional.invoke_restart(restart_name, args...)
+					args = if isempty(param_types)
+						()
+					else
+						tuple(prompt_for_input.(param_types)...)
+					end
+
+					return invoke_restart(restart.name, args...)
+				end
 			else
 				println("Invalid choice. Please try again.")
 			end
 		catch ex
-			if ex isa Restart || ex isa Abort
+			if ex[1] isa Restart || ex isa Abort
 				rethrow()
 			end
 			println(ex)
@@ -91,25 +105,53 @@ function interactive_restart_handler(exception)
 	end
 end
 
-###############################
-# Common Lisp Restart Options #
-###############################
 
 ##########
 # Macros #
 ##########
 
-############
-# EXAMPLES #
-############
+# HANDLER_CASE
 
-try
-	handling(DivisionByZero => interactive_restart_handler) do
-		result = reciprocal(0)
-		println("Result: ", result)
+macro handler_case(expr, handlers...)
+
+	handling_clauses = [
+		:($(esc(handler.args[1])) => ($(esc(handler.args[2])) -> begin
+			val = $(esc(handler.args[3]))
+			escape_fn(val)
+		end))
+		for handler in handlers
+	]
+
+	quote
+		to_escape() do escape_fn
+			handling($(handling_clauses...)) do
+				result = $(esc(expr))
+			end
+		end
 	end
-catch e
-	println("Unhandled exception: ", e)
+end
+
+# RESTART CASE
+
+macro restart_case(expr, restart_defs...)
+
+	restart_clauses = map(restart_defs) do def
+		name = def.args[1]
+		params = def.args[2]
+		body = def.args[3]
+
+		if params == ()
+			:($(esc(name)) => () -> $(esc(body)))
+		else
+			:($(esc(name)) => $(esc(params)) -> $(esc(body)))
+		end
+	end
+
+	quote
+		with_restart($(restart_clauses...)) do
+			$(esc(expr))
+		end
+	end
 end
 
 end # module
