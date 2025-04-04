@@ -180,6 +180,7 @@ end)
 
 
 ####################   USER HANDLING OF RESTARTS   ######################
+
 function reciprocal(value::Int)
 	with_restart(:return_zero => () -> 0,
 		:return_value => identity,
@@ -198,7 +199,6 @@ catch e
 end
 
 ####################   COMMON LISP RESTART OPTIONS   ####################
-
 
 function reciprocal_interactive(value::Int)
 	with_restart(
@@ -220,7 +220,6 @@ function reciprocal_interactive(value::Int)
 	end
 end
 
-# Then in a handler:
 println(handling(DivisionByZero => (c) -> invoke_restart(:square, 10)) do
 	reciprocal_interactive(0)
 end)
@@ -277,7 +276,7 @@ println("Final result: ", result)
 
 ###  @restart_case  ####
 
-reciprocal(x) = @restart_case(
+reciprocal3(x) = @restart_case(
 	x == 0 ? error(DivisionByZero()) : 1 / x,
 	(:return_zero, (), 0),  # Empty tuple for no parameters
 	(:return_value, (val), val),
@@ -286,19 +285,19 @@ reciprocal(x) = @restart_case(
 )
 
 result = handling(DivisionByZero => (c) -> invoke_restart(:return_zero)) do
-	reciprocal(0)
+	reciprocal3(0)
 end
 println("Result: ", result)
-result = handling(DivisionByZero => (c) -> invoke_restart(:return_value, 42)) do
-	reciprocal(0)
+result = handling(DivisionByZero => (c) -> invoke_restart(:return_value, 15)) do
+	reciprocal3(0)
 end
 println("Result: ", result)
 result = handling(DivisionByZero => (c) -> invoke_restart(:retry_with, 10)) do
-	reciprocal(0)
+	reciprocal3(0)
 end
 println("Result: ", result)
 result = handling(DivisionByZero => (c) -> invoke_restart(:sum_for_no_reason, 2, 3, 6)) do
-	reciprocal(0)
+	reciprocal3(0)
 end
 println("Result: ", result)
 
@@ -320,5 +319,3 @@ end
 handling(DivisionByZero => _ -> invoke_restart(:outer)) do
 	nested()
 end
-
-############################  MACROS END  ##################################

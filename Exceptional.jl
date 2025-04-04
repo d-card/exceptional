@@ -97,17 +97,6 @@ function process_restart(basic::Pair{Symbol, <:Function}, options...)
 end
 
 function available_restart(name)
-	filter(_restart_stack) do restart
-		if restart.test === nothing
-			true
-		else
-			try
-				restart.test(exception)
-			catch
-				false
-			end
-		end
-	end
 	return any(r -> r.name == name, _restart_stack)
 end
 

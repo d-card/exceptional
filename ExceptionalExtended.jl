@@ -59,7 +59,7 @@ function interactive_restart_handler(exception)
 
 	for (i, restart) in enumerate(_available_restarts)
 		name = restart.name
-		if restart.report == nothing
+		if restart.report === nothing
 			println("  $i. $name")
 		else
 			println("  $i. $name: " * restart.report)
