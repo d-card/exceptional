@@ -29,6 +29,18 @@ handling(DivisionByZero =>
 	end
 end
 
+# Several handlers per handler (only one should run)
+handling(DivisionByZero =>
+		(c) -> println("I saw a division by zero"),
+	DivisionByZero =>
+		(c) -> println("I saw a division by zero"),
+	DivisionByZero =>
+		(c) -> println("I saw a division by zero"),
+	DivisionByZero =>
+		(c) -> println("I saw a division by zero")) do
+	reciprocal(0)
+end
+
 # 3.
 function mystery(n)
 	1 +
