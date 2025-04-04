@@ -15,7 +15,7 @@ struct Restart
 	interactive::Union{Function, Nothing}
 end
 
-const _handler_stack = Vector{Pair{Type, Function}}()
+const _handler_stack = Vector{Vector{Pair{Type, Function}}}()
 const _restart_stack = Vector{Restart}()
 
 function to_escape(func)
@@ -35,18 +35,13 @@ function to_escape(func)
 end
 
 function handling(func, handlers...)
-	prev_handlers_count = length(_handler_stack)
-
-	for handler in handlers
-		pushfirst!(_handler_stack, handler)
-	end
+	handlers_frame = [h for h in handlers]
+	pushfirst!(_handler_stack, handlers_frame)
 
 	try
 		return func()
 	finally
-		while length(_handler_stack) > prev_handlers_count
-			popfirst!(_handler_stack)
-		end
+		popfirst!(_handler_stack)
 	end
 end
 
@@ -73,7 +68,6 @@ function with_restart(func, restarts...)
 end
 
 function process_restart(basic::Pair{Symbol, <:Function}, options...)
-
 	test = nothing
 	report = nothing
 	interactive = nothing
@@ -113,33 +107,37 @@ function invoke_restart(name, args...)
 end
 
 function signal(exception)
-	for (exception_type, handler_func) in _handler_stack
-		if exception isa exception_type
-			handler_func(exception)
+	for handler_frame in _handler_stack
+		for (exception_type, handler_func) in handler_frame
+			if exception isa exception_type
+				handler_func(exception)
+				break
+			end
 		end
 	end
 	return nothing
 end
 
 function error(exception)
-	for (exception_type, handler_func) in _handler_stack
-		if exception isa exception_type
-			try
-				handler_func(exception)
-			catch ex
-				if ex isa Tuple && length(ex) >= 1 && ex[1] isa Restart
-					restart = ex[1]
-					args = length(ex) > 1 ? ex[2:end] : ()
-
-					return restart.func(args...)
-				else
-					rethrow()
+	for handler_frame in _handler_stack
+		for (exception_type, handler_func) in handler_frame
+			if exception isa exception_type
+				try
+					handler_func(exception)
+					break
+				catch ex
+					if ex isa Tuple && length(ex) >= 1 && ex[1] isa Restart
+						restart = ex[1]
+						args = length(ex) > 1 ? ex[2:end] : ()
+						return restart.func(args...)
+					else
+						rethrow()
+					end
 				end
 			end
 		end
 	end
 	throw(exception)
 end
-
 
 end # module
